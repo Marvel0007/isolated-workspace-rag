@@ -37,6 +37,9 @@ model Document {
   fileType    String?
   fileSize    Int?
   status      DocumentStatus @default(PROCESSING)
+  isFavorite  Boolean        @default(false)
+  isTrashed   Boolean        @default(false)
+  trashedAt   DateTime?
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
   workspaceId String

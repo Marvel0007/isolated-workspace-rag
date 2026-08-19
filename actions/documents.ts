@@ -9,6 +9,7 @@ export async function getDocuments() {
   return prisma.document.findMany({
     where: {
       workspaceId: workspace.id,
+      isTrashed: false,
     },
     orderBy: {
       createdAt: "desc",
