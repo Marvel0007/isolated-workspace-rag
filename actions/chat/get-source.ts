@@ -20,19 +20,25 @@ export async function getSource(chunkId: string) {
           title: true,
           fileName: true,
           fileUrl: true,
+          fileType: true,
+          createdAt: true,
         },
       },
     },
   });
 
   if (!chunk) {
-    throw new Error("Source not found");
+    throw new Error("Source chunk not found");
   }
 
   return {
     id: chunk.id,
     content: chunk.content,
+    parentContent: chunk.parentContent ?? chunk.content,
     chunkIndex: chunk.chunkIndex,
+    pageNumber: chunk.pageNumber ?? 1,
+    sectionTitle: chunk.sectionTitle,
+    tokenCount: chunk.tokenCount,
     document: chunk.document,
   };
 }
