@@ -17,47 +17,104 @@ model User {
 }
 
 model Workspace {
-  id        String     @id @default(cuid())
-  name      String
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-  userId    String
-  chats     Chat[]
-  documents Document[]
-  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id           String          @id @default(cuid())
+  name         String
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  userId       String
+  chats        Chat[]
+  documents    Document[]
+  collections  Collection[]
+  tags         Tag[]
+  evaluations  RagEvaluation[]
+  pipelineLogs PipelineLog[]
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
 }
 
-model Document {
-  id          String         @id @default(cuid())
-  title       String
-  fileName    String
-  fileUrl     String
-  fileType    String?
-  fileSize    Int?
-  status      DocumentStatus @default(PROCESSING)
-  isFavorite  Boolean        @default(false)
-  isTrashed   Boolean        @default(false)
-  trashedAt   DateTime?
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+model Collection {
+  id          String     @id @default(cuid())
+  name        String
+  description String?
+  color       String?    @default("#6366f1")
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
   workspaceId String
-  chunks      Chunk[]
-  workspace   Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace   Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  documents   Document[]
 
   @@index([workspaceId])
 }
 
-model Chunk {
+model Tag {
+  id          String        @id @default(cuid())
+  name        String
+  color       String?       @default("#8b5cf6")
+  createdAt   DateTime      @default(now())
+  workspaceId String
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  documents   DocumentTag[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+model DocumentTag {
   id         String   @id @default(cuid())
-  content    String
-  chunkIndex Int
-  createdAt  DateTime @default(now())
   documentId String
+  tagId      String
   document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  tag        Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, tagId])
+  @@index([documentId])
+  @@index([tagId])
+}
+
+model Document {
+  id           String          @id @default(cuid())
+  title        String
+  fileName     String
+  fileUrl      String
+  fileType     String?
+  fileSize     Int?
+  summary      String?
+  tokenCount   Int?
+  status       DocumentStatus  @default(PROCESSING)
+  isFavorite   Boolean         @default(false)
+  isTrashed    Boolean         @default(false)
+  trashedAt    DateTime?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  workspaceId  String
+  collectionId String?
+  collection   Collection?     @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+  chunks       Chunk[]
+  tags         DocumentTag[]
+  citations    Citation[]
+  evaluations  RagEvaluation[]
+  workspace    Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([collectionId])
+}
+
+model Chunk {
+  id            String     @id @default(cuid())
+  content       String
+  parentContent String?
+  chunkIndex    Int
+  pageNumber    Int?
+  sectionTitle  String?
+  tokenCount    Int?
+  createdAt     DateTime   @default(now())
+  documentId    String
+  document      Document   @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  citations     Citation[]
 
   @@index([documentId])
+  @@index([documentId, chunkIndex])
 }
 
 model Chat {
@@ -73,16 +130,83 @@ model Chat {
 }
 
 model Message {
-  id        String      @id @default(cuid())
-  role      MessageRole
-  content   String
-  sources   Json?
-  createdAt DateTime    @default(now())
-
-  chatId String
-  chat   Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  id         String      @id @default(cuid())
+  role       MessageRole
+  content    String
+  sources    Json?
+  tokenCount Int?
+  createdAt  DateTime    @default(now())
+  chatId     String
+  chat       Chat        @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  citations  Citation[]
 
   @@index([chatId])
+}
+
+model Citation {
+  id            String    @id @default(cuid())
+  messageId     String
+  documentId    String
+  chunkId       String?
+  snippet       String
+  pageNumber    Int?
+  similarity    Float?
+  rerankScore   Float?
+  citationIndex Int       @default(1)
+  createdAt     DateTime  @default(now())
+  message       Message   @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  document      Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  chunk         Chunk?    @relation(fields: [chunkId], references: [id], onDelete: SetNull)
+
+  @@index([messageId])
+  @@index([documentId])
+  @@index([chunkId])
+}
+
+model RagEvaluation {
+  id                    String    @id @default(cuid())
+  workspaceId           String
+  documentId            String?
+  question              String
+  groundTruth           String?
+  retrievedContext      String
+  generatedAnswer       String
+  faithfulnessScore     Float?
+  answerRelevanceScore  Float?
+  contextPrecisionScore Float?
+  latencyMs             Int?
+  status                String    @default("COMPLETED")
+  notes                 String?
+  createdAt             DateTime  @default(now())
+  workspace             Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  document              Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([documentId])
+}
+
+model PipelineLog {
+  id               String    @id @default(cuid())
+  workspaceId      String
+  query            String
+  intent           String?
+  embeddingMs      Int?
+  retrievalMs      Int?
+  rerankMs         Int?
+  llmMs            Int?
+  totalMs          Int
+  chunksRetrieved  Int?
+  chunksReranked   Int?
+  promptTokens     Int?
+  completionTokens Int?
+  model            String?
+  success          Boolean   @default(true)
+  errorMessage     String?
+  createdAt        DateTime  @default(now())
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([createdAt])
 }
 
 enum DocumentStatus {
