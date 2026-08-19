@@ -1,6 +1,5 @@
 import "server-only";
-
-import { pineconeIndex } from "@/lib/pinecone";
+import { batchUpsertPinecone } from "@/lib/rag/embeddings/pinecone-batch";
 
 type UpsertEmbeddingParams = {
   chunkId: string;
@@ -9,27 +8,24 @@ type UpsertEmbeddingParams = {
   embedding: number[];
 };
 
+/**
+ * Backward-compatible single upsert wrapper.
+ */
 export async function upsertEmbedding({
   chunkId,
   documentId,
   workspaceId,
   embedding,
 }: UpsertEmbeddingParams) {
-  console.log("Upserting vector:", chunkId);
-
-  await pineconeIndex.upsert({
-    records: [
-      {
-        id: chunkId,
-        values: embedding,
-        metadata: {
-          chunkId,
-          documentId,
-          workspaceId,
-        },
+  await batchUpsertPinecone([
+    {
+      id: chunkId,
+      values: embedding,
+      metadata: {
+        chunkId,
+        documentId,
+        workspaceId,
       },
-    ],
-  });
-
-  console.log("✅ Vector upserted:", chunkId);
+    },
+  ]);
 }

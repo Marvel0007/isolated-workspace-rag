@@ -2,15 +2,13 @@
 
 import { prisma } from "@/lib/prisma";
 import { requireCurrentWorkspace } from "@/lib/workspace";
-import { generateEmbedding } from "@/lib/ai/embeddings";
-import { upsertEmbedding } from "@/lib/ai/upsert-embedding";
+import { generateBatchEmbeddings } from "@/lib/rag/embeddings/batch-embedder";
+import { batchUpsertPinecone, VectorRecord } from "@/lib/rag/embeddings/pinecone-batch";
 
 export async function embedDocument(documentId: string) {
   const workspace = await requireCurrentWorkspace();
 
-  console.log("========== EMBEDDING DOCUMENT ==========");
-  console.log("Document:", documentId);
-  console.log("Workspace:", workspace.id);
+  console.log(`[Batch Embedding] Starting for Document: ${documentId} (Workspace: ${workspace.id})`);
 
   const document = await prisma.document.findFirst({
     where: {
@@ -32,52 +30,51 @@ export async function embedDocument(documentId: string) {
     },
   });
 
-  console.log("Chunks found:", chunks.length);
-
   if (chunks.length === 0) {
-    throw new Error("No chunks found for this document");
+    throw new Error("No chunks found for this document to embed");
   }
 
-  let processed = 0;
+  console.log(`[Batch Embedding] Found ${chunks.length} chunks. Generating embeddings...`);
 
-  for (const chunk of chunks) {
-    console.log(
-      `Processing chunk ${processed + 1}/${chunks.length}`
+  // 1. Generate embeddings in parallel batches (up to 96 per API call)
+  const chunkTexts = chunks.map((c) => c.content);
+  const embeddings = await generateBatchEmbeddings(chunkTexts, "search_document");
+
+  if (embeddings.length !== chunks.length) {
+    throw new Error(
+      `Mismatch: ${chunks.length} chunks but received ${embeddings.length} embeddings`
     );
+  }
 
-    const embedding = await generateEmbedding(
-      chunk.content
-    );
-
-    console.log(
-      "Embedding dimensions:",
-      embedding.length
-    );
-
-    if (embedding.length !== 1024) {
-      throw new Error(
-        `Expected 1024 dimensions, got ${embedding.length}`
-      );
-    }
-
-    await upsertEmbedding({
+  // 2. Prepare vector records with enriched metadata
+  const vectorRecords: VectorRecord[] = chunks.map((chunk, idx) => ({
+    id: chunk.id,
+    values: embeddings[idx],
+    metadata: {
       chunkId: chunk.id,
       documentId: document.id,
       workspaceId: workspace.id,
-      embedding,
-    });
+      pageNumber: chunk.pageNumber ?? 1,
+      sectionTitle: chunk.sectionTitle ?? "",
+      tokenCount: chunk.tokenCount ?? 0,
+      snippet: chunk.content.slice(0, 300),
+    },
+  }));
 
-    processed++;
+  // 3. Batch upsert vectors into Pinecone (in batches of 100)
+  console.log(`[Batch Embedding] Upserting ${vectorRecords.length} vectors to Pinecone...`);
+  const upsertedCount = await batchUpsertPinecone(vectorRecords);
 
-    console.log(
-      `✅ Upserted ${processed}/${chunks.length}`
-    );
-  }
+  // 4. Mark document status as COMPLETED
+  await prisma.document.update({
+    where: { id: document.id },
+    data: { status: "COMPLETED" },
+  });
 
-  console.log("========== EMBEDDING COMPLETE ==========");
+  console.log(`[Batch Embedding Complete] Successfully embedded and indexed ${upsertedCount} chunks.`);
 
   return {
     documentId,
-    chunksProcessed: processed,
+    chunksProcessed: upsertedCount,
   };
 }
