@@ -2,11 +2,9 @@
 
 import { requireCurrentWorkspace } from "@/lib/workspace";
 import { prisma } from "@/lib/prisma";
-import { extractText } from "@/lib/documents/extract-text";
+import { parseDocument } from "@/lib/rag/ingestion/parser";
 
-export async function processDocument(
-  documentId: string
-) {
+export async function processDocument(documentId: string) {
   const workspace = await requireCurrentWorkspace();
 
   const document = await prisma.document.findFirst({
@@ -24,23 +22,19 @@ export async function processDocument(
     const response = await fetch(document.fileUrl);
 
     if (!response.ok) {
-      throw new Error("Failed to fetch document");
+      throw new Error(`Failed to fetch document: HTTP ${response.status}`);
     }
 
-    const blob = await response.blob();
+    const arrayBuffer = await response.arrayBuffer();
 
-    const file = new File(
-      [blob],
+    const parsed = await parseDocument(
+      arrayBuffer,
       document.fileName,
-      {
-        type: document.fileType ?? undefined,
-      }
+      document.fileType ?? undefined
     );
 
-    const text = await extractText(file);
-
-    if (!text.trim()) {
-      throw new Error("No text could be extracted");
+    if (!parsed.fullText.trim()) {
+      throw new Error("No readable text could be extracted from document");
     }
 
     await prisma.document.update({
@@ -49,14 +43,19 @@ export async function processDocument(
       },
       data: {
         status: "COMPLETED",
+        tokenCount: parsed.totalTokens,
       },
     });
 
     return {
       documentId: document.id,
-      text,
+      sectionsCount: parsed.sections.length,
+      totalTokens: parsed.totalTokens,
+      text: parsed.fullText,
     };
   } catch (error) {
+    console.error(`[Process Document Error] ID: ${documentId}`, error);
+
     await prisma.document.update({
       where: {
         id: document.id,

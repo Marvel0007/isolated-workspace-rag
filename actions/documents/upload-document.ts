@@ -1,15 +1,34 @@
 "use server";
 
 import { put } from "@vercel/blob";
-
 import { requireCurrentWorkspace } from "@/lib/workspace";
 import { prisma } from "@/lib/prisma";
 
-const MAX_FILE_SIZE = 20 * 1024 * 1024;
+const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
 
-const ALLOWED_TYPES = [
+const ALLOWED_EXTENSIONS = [
+  "pdf",
+  "txt",
+  "md",
+  "markdown",
+  "json",
+  "csv",
+  "py",
+  "ts",
+  "tsx",
+  "js",
+  "jsx",
+  "sql",
+  "html",
+];
+
+const ALLOWED_MIME_PREFIXES = [
   "application/pdf",
-  "text/plain",
+  "text/",
+  "application/json",
+  "application/csv",
+  "application/x-javascript",
+  "application/javascript",
 ];
 
 export async function uploadDocument(formData: FormData) {
@@ -26,11 +45,19 @@ export async function uploadDocument(formData: FormData) {
   }
 
   if (file.size > MAX_FILE_SIZE) {
-    throw new Error("File size must be less than 20MB");
+    throw new Error("File size exceeds maximum allowed size of 25MB");
   }
 
-  if (!ALLOWED_TYPES.includes(file.type)) {
-    throw new Error("Only PDF and text files are supported");
+  const ext = file.name.split(".").pop()?.toLowerCase() || "";
+  const isAllowedExt = ALLOWED_EXTENSIONS.includes(ext);
+  const isAllowedMime =
+    file.type &&
+    ALLOWED_MIME_PREFIXES.some((prefix) => file.type.startsWith(prefix));
+
+  if (!isAllowedExt && !isAllowedMime) {
+    throw new Error(
+      `Unsupported file format (.${ext}). Supported formats: PDF, Markdown, Text, Code, JSON, and CSV.`
+    );
   }
 
   const blob = await put(
@@ -41,12 +68,14 @@ export async function uploadDocument(formData: FormData) {
     }
   );
 
+  const title = file.name.replace(/\.[^/.]+$/, "");
+
   const document = await prisma.document.create({
     data: {
-      title: file.name.replace(/\.[^/.]+$/, ""),
+      title,
       fileName: file.name,
       fileUrl: blob.url,
-      fileType: file.type,
+      fileType: file.type || `text/${ext}`,
       fileSize: file.size,
       status: "PROCESSING",
       workspaceId: workspace.id,
