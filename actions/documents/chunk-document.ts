@@ -2,15 +2,11 @@
 
 import { requireCurrentWorkspace } from "@/lib/workspace";
 import { prisma } from "@/lib/prisma";
-import { chunkText } from "@/lib/documents/chunk-text";
-import { extractText } from "@/lib/documents/extract-text";
+import { parseDocument } from "@/lib/rag/ingestion/parser";
+import { buildParentChildChunks } from "@/lib/rag/chunking/parent-child-chunker";
 
 export async function chunkDocument(documentId: string) {
-  console.log("1. Starting document processing:", documentId);
-
   const workspace = await requireCurrentWorkspace();
-
-  console.log("2. Workspace:", workspace.id);
 
   const document = await prisma.document.findFirst({
     where: {
@@ -23,69 +19,66 @@ export async function chunkDocument(documentId: string) {
     throw new Error("Document not found");
   }
 
-  console.log("3. Document found:", document.fileName);
-  console.log("4. File URL:", document.fileUrl);
-
   const response = await fetch(document.fileUrl);
 
   if (!response.ok) {
-    throw new Error(
-      `Failed to fetch document: ${response.status}`
-    );
+    throw new Error(`Failed to fetch document: HTTP ${response.status}`);
   }
 
-  const blob = await response.blob();
+  const arrayBuffer = await response.arrayBuffer();
 
-  console.log("5. Blob fetched:", blob.size, blob.type);
-
-  const file = new File(
-    [blob],
+  // 1. Structure-aware multi-format parsing
+  const parsed = await parseDocument(
+    arrayBuffer,
     document.fileName,
-    {
-      type: document.fileType ?? blob.type,
-    }
+    document.fileType ?? undefined
   );
 
-  console.log("6. Extracting text...");
-
-  const text = await extractText(file);
-
-  console.log("7. Text length:", text.length);
-
-  if (!text.trim()) {
-    throw new Error("No text could be extracted from document");
+  if (parsed.sections.length === 0) {
+    throw new Error("No extractable text found in document");
   }
 
-  console.log("8. Creating chunks...");
+  // 2. Build hierarchical Parent-Child chunks
+  const hierarchicalChunks = buildParentChildChunks(parsed.sections, {
+    parentChunkSize: 1800,
+    parentOverlap: 250,
+    childChunkSize: 500,
+    childOverlap: 100,
+  });
 
-  const chunks = chunkText(text);
-
-  console.log("9. Chunk count:", chunks.length);
-
-  if (chunks.length === 0) {
+  if (hierarchicalChunks.length === 0) {
     throw new Error("Chunking produced zero chunks");
   }
 
+  // 3. Clear existing chunks
   await prisma.chunk.deleteMany({
     where: {
       documentId: document.id,
     },
   });
 
-  console.log("10. Old chunks deleted");
-
-  const result = await prisma.chunk.createMany({
-    data: chunks.map((content, index) => ({
-      content,
-      chunkIndex: index,
+  // 4. Batch insert enhanced chunks
+  const created = await prisma.chunk.createMany({
+    data: hierarchicalChunks.map((chunk) => ({
+      content: chunk.content,
+      parentContent: chunk.parentContent,
+      chunkIndex: chunk.chunkIndex,
+      pageNumber: chunk.pageNumber,
+      sectionTitle: chunk.sectionTitle ?? null,
+      tokenCount: chunk.tokenCount,
       documentId: document.id,
     })),
   });
 
-  console.log("11. Chunks created:", result.count);
+  // 5. Update document total tokens
+  await prisma.document.update({
+    where: { id: document.id },
+    data: { tokenCount: parsed.totalTokens },
+  });
 
   return {
     documentId: document.id,
-    chunkCount: result.count,
+    chunkCount: created.count,
+    totalTokens: parsed.totalTokens,
   };
 }
