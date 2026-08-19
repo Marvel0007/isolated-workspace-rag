@@ -13,7 +13,8 @@ interface MarkdownRendererProps {
     documentId: string;
     title: string;
     fileName: string;
-    score: number;
+    score?: number;
+    relevanceScore?: number;
     pageNumber?: number;
     sectionTitle?: string;
   }>;

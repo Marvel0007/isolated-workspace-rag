@@ -2,7 +2,8 @@
 
 import { requireCurrentWorkspace } from "@/lib/workspace";
 import { prisma } from "@/lib/prisma";
-import { parseDocument } from "@/lib/rag/ingestion/parser";
+import { chunkDocument } from "./chunk-document";
+import { embedDocument } from "./embed-document";
 
 export async function processDocument(documentId: string) {
   const workspace = await requireCurrentWorkspace();
@@ -19,50 +20,35 @@ export async function processDocument(documentId: string) {
   }
 
   try {
-    const response = await fetch(document.fileUrl);
+    await prisma.document.update({
+      where: { id: document.id },
+      data: { status: "PROCESSING" },
+    });
 
-    if (!response.ok) {
-      throw new Error(`Failed to fetch document: HTTP ${response.status}`);
-    }
+    // 1. Structure-aware parsing and Parent-Child Chunking
+    const chunkResult = await chunkDocument(documentId);
 
-    const arrayBuffer = await response.arrayBuffer();
-
-    const parsed = await parseDocument(
-      arrayBuffer,
-      document.fileName,
-      document.fileType ?? undefined
-    );
-
-    if (!parsed.fullText.trim()) {
-      throw new Error("No readable text could be extracted from document");
-    }
+    // 2. Batch Embedding and Pinecone Indexing
+    const embedResult = await embedDocument(documentId);
 
     await prisma.document.update({
-      where: {
-        id: document.id,
-      },
-      data: {
-        status: "COMPLETED",
-        tokenCount: parsed.totalTokens,
-      },
+      where: { id: document.id },
+      data: { status: "COMPLETED" },
     });
 
     return {
-      documentId: document.id,
-      sectionsCount: parsed.sections.length,
-      totalTokens: parsed.totalTokens,
-      text: parsed.fullText,
+      documentId,
+      chunkCount: chunkResult.chunkCount,
+      totalTokens: chunkResult.totalTokens,
+      chunksProcessed: embedResult.chunksProcessed,
+      status: "COMPLETED",
     };
   } catch (error) {
     console.error(`[Process Document Error] ID: ${documentId}`, error);
 
     await prisma.document.update({
-      where: {
-        id: document.id,
-      },
-      data: {
-        status: "FAILED",
-      },
+      where: { id: document.id },
+      data: { status: "FAILED" },
     });
 
     throw error;

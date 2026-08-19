@@ -1,24 +1,45 @@
 "use server";
 
 import { requireCurrentWorkspace } from "@/lib/workspace";
-import { searchSimilarChunks } from "@/lib/ai/search";
+import { hybridRetrieve } from "@/lib/rag/retrieval/hybrid-retriever";
+import { rerankChunks } from "@/lib/rag/reranking/cohere-reranker";
 
 export async function searchDocuments(query: string) {
   const workspace = await requireCurrentWorkspace();
+  const trimmed = query.trim();
 
-  if (!query.trim()) {
-    throw new Error("Search query is required");
+  if (!trimmed) {
+    return [];
   }
 
-  const matches = await searchSimilarChunks(
-    query,
-    workspace.id,
-    5
-  );
+  // 1. Hybrid dense + sparse retrieval
+  const retrieved = await hybridRetrieve({
+    query: trimmed,
+    filter: { workspaceId: workspace.id },
+    fusedTopK: 15,
+  });
 
-  return matches.map((match) => ({
-    id: match.id,
-    score: match.score,
-    metadata: match.metadata,
+  if (retrieved.length === 0) {
+    return [];
+  }
+
+  // 2. Cross-encoder rerank
+  const reranked = await rerankChunks(trimmed, retrieved, {
+    topN: 10,
+    scoreThreshold: 0.05,
+  });
+
+  return reranked.map((item) => ({
+    chunkId: item.chunkId,
+    documentId: item.documentId,
+    title: item.documentTitle,
+    fileName: item.fileName,
+    pageNumber: item.pageNumber,
+    sectionTitle: item.sectionTitle,
+    content: item.content,
+    parentContent: item.parentContent,
+    score: item.rerankScore,
+    denseRank: item.denseRank,
+    sparseRank: item.sparseRank,
   }));
 }

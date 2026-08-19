@@ -1,9 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2, Play } from "lucide-react";
-
-import { chunkDocument } from "@/actions/documents/chunk-document";
+import { CheckCircle2, Loader2, Play } from "lucide-react";
+import { processDocument } from "@/actions/documents/process-document";
 import { Button } from "@/components/ui/button";
 
 type ProcessDocumentButtonProps = {
@@ -19,13 +18,15 @@ export function ProcessDocumentButton({
   async function handleProcess() {
     try {
       setProcessing(true);
-      setMessage("");
+      setMessage("Parsing, chunking & indexing vectors in Pinecone...");
 
-      const result = await chunkDocument(documentId);
+      const result = await processDocument(documentId);
 
-      setMessage(`${result.chunkCount} chunks created.`);
+      setMessage(`Indexed ${result.chunkCount} chunks (${result.totalTokens} tokens) successfully!`);
 
-      window.location.reload();
+      setTimeout(() => {
+        window.location.reload();
+      }, 800);
     } catch (error) {
       setMessage(
         error instanceof Error
@@ -44,22 +45,23 @@ export function ProcessDocumentButton({
         variant="outline"
         onClick={handleProcess}
         disabled={processing}
+        className="w-full text-xs font-medium"
       >
         {processing ? (
           <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Processing...
+            <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin text-primary" />
+            Indexing RAG...
           </>
         ) : (
           <>
-            <Play className="mr-2 h-4 w-4" />
-            Process
+            <Play className="mr-2 h-3.5 w-3.5 text-primary" />
+            Index Document
           </>
         )}
       </Button>
 
       {message && (
-        <p className="mt-2 text-xs text-muted-foreground">
+        <p className="mt-2 text-xs text-muted-foreground line-clamp-2">
           {message}
         </p>
       )}

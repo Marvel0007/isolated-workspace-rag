@@ -11,16 +11,12 @@ export async function getDocument(documentId: string) {
       id: documentId,
       workspaceId: workspace.id,
     },
-    select: {
-      id: true,
-      title: true,
-      fileName: true,
-      fileUrl: true,
-      fileType: true,
-      fileSize: true,
-      status: true,
-      createdAt: true,
-      updatedAt: true,
+    include: {
+      chunks: {
+        orderBy: {
+          chunkIndex: "asc",
+        },
+      },
     },
   });
 
